@@ -2,62 +2,68 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Fortnightly Chore Roster", layout="wide")
+st.set_page_config(page_title="Household Chore Roster", layout="wide")
 
 st.title("🏠 Household Chore Roster")
-st.write("J and L are home every 2nd week (Sunday PM to Sunday PM).")
+st.write("J and L are home Sunday PM to Sunday PM every 2nd week.")
 
-# --- 1. DYNAMIC DATE LOGIC ---
+# --- 1. DYNAMIC DATE & ROTATION LOGIC ---
 anchor_date = datetime(2026, 1, 25)
 today = datetime.now()
 
-# Calculate how many fortnights have passed since anchor to keep the list rolling
+# Calculate fortnights passed to rotate weekly tasks fairly over time
 weeks_passed = (today - anchor_date).days // 7
 current_fortnight_index = weeks_passed // 2
 
-# Generate the next 4 available start dates (2-week intervals)
+# Dropdown for the next 4 "On-Weeks"
 start_dates = []
 for i in range(4):
     d = anchor_date + timedelta(weeks=(current_fortnight_index + i) * 2)
     start_dates.append(d.strftime("%d/%m/%Y"))
 
-selected_start_str = st.sidebar.selectbox("Select Roster Start Date (Sunday):", start_dates)
+selected_start_str = st.sidebar.selectbox("Select Roster Start Date:", start_dates)
 selected_start = datetime.strptime(selected_start_str, "%d/%m/%Y")
 
-# Sidebar for J's work schedule
+# Calculate rotation offset based on which fortnight we are in
+# This ensures K, J, and L take turns with the big weekly cleaning tasks
+fortnight_count = (selected_start - anchor_date).days // 14
+names = ["K", "J", "L"]
+
 st.sidebar.markdown("---")
 j_working_days = st.sidebar.multiselect(
-    "Days J is working late (Skip Dinner):",
+    "Days J is working late (Exempt from Dinner):",
     ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 )
 
 # --- 2. ROSTER GENERATION ---
-def generate_roster(start_date):
-    names = ["K", "J", "L"]
+def generate_roster(start_date, f_index):
     roster_list = []
     
-    # Range is 0 to 7 (8 days total: Sun to Sun)
+    # Cleaning Task Assignments (Rotating based on the fortnight index)
+    # Fortnight 1: K=Toilet, J=Vacuum, L=Mop (if due)
+    # Fortnight 2: J=Toilet, L=Vacuum, K=Mop (if due) ... and so on.
+    toilet_cleaner = names[f_index % 3]
+    vacuum_cleaner = names[(f_index + 1) % 3]
+    mop_cleaner = names[(f_index + 2) % 3]
+
     for i in range(8):
         current_date = start_date + timedelta(days=i)
         day_name = current_date.strftime("%A")
         date_str = current_date.strftime("%d/%m")
         
-        # Default values
         breakfast = "Self"
         lunch = "-"
         dinner = "-"
         task = "-"
 
-        # FIRST SUNDAY (Start of roster)
+        # FIRST SUNDAY
         if i == 0:
             breakfast = "N/A"
             lunch = "N/A"
-            dinner = names[0] # Starts with K
+            dinner = names[0] # Static start for dinner
         
-        # WEEKDAYS (Mon - Fri)
+        # WEEKDAYS
         elif 1 <= i <= 5:
-            lunch = "-" # No lunch dishes on weekdays
-            # Dinner rotation logic (skipping J if working)
             dinner_candidate = names[i % 3]
             if dinner_candidate == "J" and day_name in j_working_days:
                 dinner = "L (J Working)"
@@ -68,16 +74,17 @@ def generate_roster(start_date):
         elif i == 6:
             lunch = names[i % 3]
             dinner = names[(i + 1) % 3]
-            task = "🧼 CLEAN TOILET"
+            task = f"🧼 TOILET ({toilet_cleaner})"
 
-        # FINAL SUNDAY (End of roster)
+        # FINAL SUNDAY
         elif i == 7:
             lunch = names[i % 3]
             dinner = "N/A (Departed)"
-            task = "🧹 VACUUM"
-            # Mopping once a month (using the 4th week logic)
+            # Monthly mop logic: check if it's the 4th week of the month
             if current_date.day > 21:
-                task += " & ✨ MOP"
+                task = f"🧹 VACUUM ({vacuum_cleaner}) & ✨ MOP ({mop_cleaner})"
+            else:
+                task = f"🧹 VACUUM ({vacuum_cleaner})"
 
         roster_list.append({
             "Date": date_str,
@@ -90,18 +97,27 @@ def generate_roster(start_date):
     
     return pd.DataFrame(roster_list)
 
-# --- 3. DISPLAY ---
-df = generate_roster(selected_start)
+# --- 3. DISPLAY & PRINT ---
+df = generate_roster(selected_start, fortnight_count)
 
-# Using dataframe with column config to ensure "Weekly Task" is wide and visible
 st.dataframe(
     df,
     column_config={
-        "Weekly Task": st.column_config.TextColumn("Weekly Task", width="large"),
+        "Weekly Task": st.column_config.TextColumn("Weekly Task (Assigned)", width="large"),
         "Date": st.column_config.TextColumn("Date", width="small"),
     },
     hide_index=True,
     use_container_width=True
 )
 
-st.info("The roster automatically rolls forward. Once the current fortnight ends, the next dates will appear in the sidebar.")
+# Create a CSV for downloading/printing
+csv = df.to_csv(index=False).encode('utf-8')
+
+st.download_button(
+    label="📥 Download Roster for Printing",
+    data=csv,
+    file_name=f"chores_roster_{selected_start_str}.csv",
+    mime="text/csv",
+)
+
+st.info("The cleaning tasks (Toilet/Vacuum/Mop) rotate through K, J, and L every fortnight.")

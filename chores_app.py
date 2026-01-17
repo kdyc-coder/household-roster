@@ -4,30 +4,28 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Household Chore Roster", layout="wide")
 
-st.title("🏠 Household Chore Roster")
+st.title("🏠 Fortnightly Household Roster")
 st.write("J and L are home Sunday PM to Sunday PM every 2nd week.")
 
-# --- 1. DYNAMIC DATE & ROTATION LOGIC ---
+# --- 1. SETTINGS & DATES ---
 anchor_date = datetime(2026, 1, 25)
 today = datetime.now()
 
-# Calculate fortnights passed to rotate weekly tasks fairly over time
+# Calculate fortnights for rotation
 weeks_passed = (today - anchor_date).days // 7
 current_fortnight_index = weeks_passed // 2
 
-# Dropdown for the next 4 "On-Weeks"
+# Generate next 4 start dates
 start_dates = []
 for i in range(4):
     d = anchor_date + timedelta(weeks=(current_fortnight_index + i) * 2)
     start_dates.append(d.strftime("%d/%m/%Y"))
 
+# Sidebar controls
+st.sidebar.header("Settings")
 selected_start_str = st.sidebar.selectbox("Select Roster Start Date:", start_dates)
 selected_start = datetime.strptime(selected_start_str, "%d/%m/%Y")
-
-# Calculate rotation offset based on which fortnight we are in
-# This ensures K, J, and L take turns with the big weekly cleaning tasks
 fortnight_count = (selected_start - anchor_date).days // 14
-names = ["K", "J", "L"]
 
 st.sidebar.markdown("---")
 j_working_days = st.sidebar.multiselect(
@@ -35,13 +33,12 @@ j_working_days = st.sidebar.multiselect(
     ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 )
 
-# --- 2. ROSTER GENERATION ---
+# --- 2. ROSTER LOGIC ---
 def generate_roster(start_date, f_index):
+    names = ["K", "J", "L"]
     roster_list = []
     
-    # Cleaning Task Assignments (Rotating based on the fortnight index)
-    # Fortnight 1: K=Toilet, J=Vacuum, L=Mop (if due)
-    # Fortnight 2: J=Toilet, L=Vacuum, K=Mop (if due) ... and so on.
+    # Rotation logic for cleaning tasks
     toilet_cleaner = names[f_index % 3]
     vacuum_cleaner = names[(f_index + 1) % 3]
     mop_cleaner = names[(f_index + 2) % 3]
@@ -51,73 +48,104 @@ def generate_roster(start_date, f_index):
         day_name = current_date.strftime("%A")
         date_str = current_date.strftime("%d/%m")
         
-        breakfast = "Self"
+        # Defaults
         lunch = "-"
         dinner = "-"
-        task = "-"
+        task_list = []
 
-        # FIRST SUNDAY
+        # --- MEALS (DISHES) ---
+        # 1st Sunday
         if i == 0:
-            breakfast = "N/A"
+            dinner = names[0] # K starts
             lunch = "N/A"
-            dinner = names[0] # Static start for dinner
-        
-        # WEEKDAYS
+        # Weekdays
         elif 1 <= i <= 5:
             dinner_candidate = names[i % 3]
             if dinner_candidate == "J" and day_name in j_working_days:
                 dinner = "L (J Working)"
             else:
                 dinner = dinner_candidate
-
-        # SATURDAY
+        # Saturday
         elif i == 6:
             lunch = names[i % 3]
             dinner = names[(i + 1) % 3]
-            task = f"🧼 TOILET ({toilet_cleaner})"
-
-        # FINAL SUNDAY
+        # Final Sunday
         elif i == 7:
             lunch = names[i % 3]
             dinner = "N/A (Departed)"
-            # Monthly mop logic: check if it's the 4th week of the month
+
+        # --- TASKS ---
+        # 1. Room Cleaning (Wed & Sat)
+        if day_name in ["Wednesday", "Saturday"]:
+            task_list.append("🛏️ Clean/Vacuum Own Room (J & L)")
+
+        # 2. Shared Cleaning (Sat & Sun)
+        if day_name == "Saturday":
+            task_list.append(f"🧼 CLEAN TOILET ({toilet_cleaner})")
+        elif day_name == "Sunday" and i == 7: # Only the full Sunday
             if current_date.day > 21:
-                task = f"🧹 VACUUM ({vacuum_cleaner}) & ✨ MOP ({mop_cleaner})"
+                 task_list.append(f"🧹 VACUUM ({vacuum_cleaner}) & ✨ MOP ({mop_cleaner})")
             else:
-                task = f"🧹 VACUUM ({vacuum_cleaner})"
+                 task_list.append(f"🧹 VACUUM ({vacuum_cleaner})")
+
+        # Combine tasks into string
+        full_task_str = " + ".join(task_list) if task_list else "-"
 
         roster_list.append({
             "Date": date_str,
             "Day": day_name,
-            "Breakfast": breakfast,
-            "Lunch": lunch,
-            "Dinner": dinner,
-            "Weekly Task": task
+            "Dishes: Lunch": lunch,
+            "L_Done": False, # Checkbox column
+            "Dishes: Dinner": dinner,
+            "D_Done": False, # Checkbox column
+            "Cleaning & Rooms": full_task_str,
+            "C_Done": False  # Checkbox column
         })
     
     return pd.DataFrame(roster_list)
 
-# --- 3. DISPLAY & PRINT ---
 df = generate_roster(selected_start, fortnight_count)
 
-st.dataframe(
+# --- 3. DISPLAY WITH TICK BOXES ---
+st.markdown("### 📋 Fortnightly Schedule")
+
+# We use data_editor to make the checkboxes clickable
+edited_df = st.data_editor(
     df,
     column_config={
-        "Weekly Task": st.column_config.TextColumn("Weekly Task (Assigned)", width="large"),
-        "Date": st.column_config.TextColumn("Date", width="small"),
+        "Date": st.column_config.TextColumn("Date", width="small", disabled=True),
+        "Day": st.column_config.TextColumn("Day", width="small", disabled=True),
+        "Dishes: Lunch": st.column_config.TextColumn("Dishes: Lunch", width="small", disabled=True),
+        "Dishes: Dinner": st.column_config.TextColumn("Dishes: Dinner", width="small", disabled=True),
+        "Cleaning & Rooms": st.column_config.TextColumn("Cleaning & Rooms", width="large", disabled=True),
+        
+        # Configuration for the Checkboxes
+        "L_Done": st.column_config.CheckboxColumn("Done?", width="small"),
+        "D_Done": st.column_config.CheckboxColumn("Done?", width="small"),
+        "C_Done": st.column_config.CheckboxColumn("Done?", width="small"),
     },
     hide_index=True,
     use_container_width=True
 )
 
-# Create a CSV for downloading/printing
-csv = df.to_csv(index=False).encode('utf-8')
+# --- 4. PENALTY NOTICE ---
+st.error("""
+**⚠️ PENALTY NOTICE:**
+Unclean rooms will result in the immediate **loss of electronic equipment** (including Xbox and Switch), 
+and any other penalty Dad chooses.
+""")
 
+# --- 5. PRINT BUTTON ---
+# For printing, we replace False/True with empty brackets [ ] for the paper version
+print_df = df.copy()
+print_df["L_Done"] = "[ ]"
+print_df["D_Done"] = "[ ]"
+print_df["C_Done"] = "[ ]"
+
+csv = print_df.to_csv(index=False).encode('utf-8')
 st.download_button(
-    label="📥 Download Roster for Printing",
+    label="📥 Download Printable Roster (CSV)",
     data=csv,
-    file_name=f"chores_roster_{selected_start_str}.csv",
+    file_name=f"chores_roster_{selected_start_str.replace('/','-')}.csv",
     mime="text/csv",
 )
-
-st.info("The cleaning tasks (Toilet/Vacuum/Mop) rotate through K, J, and L every fortnight.")

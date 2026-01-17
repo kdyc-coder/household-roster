@@ -2,65 +2,106 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 
-# Page config
-st.set_page_config(page_title="Household Chore Roster", layout="wide")
+st.set_page_config(page_title="Fortnightly Chore Roster", layout="wide")
 
-st.title("🏠 Fortnightly Chore Roster")
-st.write("J and L are home this week. Breakfast is 'Self'. No lunch dishes on weekdays.")
+st.title("🏠 Household Chore Roster")
+st.write("J and L are home every 2nd week (Sunday PM to Sunday PM).")
 
-# 1. User Input: Is J working?
-st.sidebar.header("Settings")
+# --- 1. DYNAMIC DATE LOGIC ---
+anchor_date = datetime(2026, 1, 25)
+today = datetime.now()
+
+# Calculate how many fortnights have passed since anchor to keep the list rolling
+weeks_passed = (today - anchor_date).days // 7
+current_fortnight_index = weeks_passed // 2
+
+# Generate the next 4 available start dates (2-week intervals)
+start_dates = []
+for i in range(4):
+    d = anchor_date + timedelta(weeks=(current_fortnight_index + i) * 2)
+    start_dates.append(d.strftime("%d/%m/%Y"))
+
+selected_start_str = st.sidebar.selectbox("Select Roster Start Date (Sunday):", start_dates)
+selected_start = datetime.strptime(selected_start_str, "%d/%m/%Y")
+
+# Sidebar for J's work schedule
+st.sidebar.markdown("---")
 j_working_days = st.sidebar.multiselect(
-    "Select days J is working late (Exempt from Dinner):",
+    "Days J is working late (Skip Dinner):",
     ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 )
 
-# 2. Logic to build the roster
-def generate_data():
-    anchor_date = datetime(2026, 1, 25)
-    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+# --- 2. ROSTER GENERATION ---
+def generate_roster(start_date):
     names = ["K", "J", "L"]
-    
     roster_list = []
     
-    for i, day_name in enumerate(days):
-        current_date = anchor_date + timedelta(days=i)
+    # Range is 0 to 7 (8 days total: Sun to Sun)
+    for i in range(8):
+        current_date = start_date + timedelta(days=i)
+        day_name = current_date.strftime("%A")
+        date_str = current_date.strftime("%d/%m")
         
-        # Lunch logic (Weekends only)
-        lunch = names[i % 3] if day_name in ["Saturday", "Sunday"] else "-"
-        
-        # Dinner logic (Rotate, but skip J if working)
-        dinner_candidate = names[i % 3]
-        if dinner_candidate == "J" and day_name in j_working_days:
-            # If J is working, give it to the next person in rotation (L or K)
-            dinner_assigned = names[(i + 1) % 3]
-            note = " (J Working)"
-        else:
-            dinner_assigned = dinner_candidate
-            note = ""
-
-        # Cleaning logic
+        # Default values
+        breakfast = "Self"
+        lunch = "-"
+        dinner = "-"
         task = "-"
-        if day_name == "Saturday":
+
+        # FIRST SUNDAY (Start of roster)
+        if i == 0:
+            breakfast = "N/A"
+            lunch = "N/A"
+            dinner = names[0] # Starts with K
+        
+        # WEEKDAYS (Mon - Fri)
+        elif 1 <= i <= 5:
+            lunch = "-" # No lunch dishes on weekdays
+            # Dinner rotation logic (skipping J if working)
+            dinner_candidate = names[i % 3]
+            if dinner_candidate == "J" and day_name in j_working_days:
+                dinner = "L (J Working)"
+            else:
+                dinner = dinner_candidate
+
+        # SATURDAY
+        elif i == 6:
+            lunch = names[i % 3]
+            dinner = names[(i + 1) % 3]
             task = "🧼 CLEAN TOILET"
-        elif day_name == "Sunday":
+
+        # FINAL SUNDAY (End of roster)
+        elif i == 7:
+            lunch = names[i % 3]
+            dinner = "N/A (Departed)"
             task = "🧹 VACUUM"
-            # Mopping once a month - checking if it's the 4th week of the month
+            # Mopping once a month (using the 4th week logic)
             if current_date.day > 21:
                 task += " & ✨ MOP"
 
         roster_list.append({
+            "Date": date_str,
             "Day": day_name,
-            "Date": current_date.strftime("%d/%m"),
+            "Breakfast": breakfast,
             "Lunch": lunch,
-            "Dinner": f"{dinner_assigned}{note}",
+            "Dinner": dinner,
             "Weekly Task": task
         })
     
     return pd.DataFrame(roster_list)
 
-# Display the table
-df = generate_data()
-st.table(df)
+# --- 3. DISPLAY ---
+df = generate_roster(selected_start)
 
-st.info("💡 Reminder: J and L are with me every 2nd week from Sunday PM to Sunday PM.")
+# Using dataframe with column config to ensure "Weekly Task" is wide and visible
+st.dataframe(
+    df,
+    column_config={
+        "Weekly Task": st.column_config.TextColumn("Weekly Task", width="large"),
+        "Date": st.column_config.TextColumn("Date", width="small"),
+    },
+    hide_index=True,
+    use_container_width=True
+)
+
+st.info("The roster automatically rolls forward. Once the current fortnight ends, the next dates will appear in the sidebar.")
